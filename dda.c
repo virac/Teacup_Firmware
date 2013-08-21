@@ -86,10 +86,13 @@ void dda_new_startpoint(void) {
 void dda_create(DDA *dda, TARGET *target, DDA *prev_dda) {
 	uint32_t	steps, x_delta_um, y_delta_um, z_delta_um, e_delta_um;
 	uint32_t	distance, c_limit, c_limit_calc;
-  #ifdef LOOKAHEAD
-  // Number the moves to identify them; allowed to overflow.
-  static uint8_t idcnt = 0;
-  #endif
+	#ifdef COREXY
+		uint32_t	steps_a,steps_b;
+	#endif
+	#ifdef LOOKAHEAD
+	// Number the moves to identify them; allowed to overflow.
+		static uint8_t idcnt = 0;
+	#endif
 
 	// initialise DDA to a known state
 	dda->allflags = 0;
@@ -100,42 +103,66 @@ void dda_create(DDA *dda, TARGET *target, DDA *prev_dda) {
 	// we end at the passed target
 	memcpy(&(dda->endpoint), target, sizeof(TARGET));
 
-  #ifdef LOOKAHEAD
-  // Set the start and stop speeds to zero for now = full stops between
-  // moves. Also fallback if lookahead calculations fail to finish in time.
-  dda->F_start = 0;
-  dda->F_end = 0;
-  // Give this move an identifier.
-  dda->id = idcnt++;
-  #endif
+	#ifdef LOOKAHEAD
+		// Set the start and stop speeds to zero for now = full stops between
+		// moves. Also fallback if lookahead calculations fail to finish in time.
+		dda->F_start = 0;
+		dda->F_end = 0;
+		// Give this move an identifier.
+		dda->id = idcnt++;
+	#endif
 
 // TODO TODO: We should really make up a loop for all axes.
 //            Think of what happens when a sixth axis (multi colour extruder)
 //            appears?
-	x_delta_um = (uint32_t)labs(target->X - startpoint.X);
-	y_delta_um = (uint32_t)labs(target->Y - startpoint.Y);
+	#ifndef COREXY
+		x_delta_um = (uint32_t)labs(target->X - startpoint.X);
+		y_delta_um = (uint32_t)labs(target->Y - startpoint.Y);
+	#else
+		x_delta_um = (uint32_t)labs((target->X - startpoint.X)+(target->Y - startpoint.Y));
+		y_delta_um = (uint32_t)labs((target->X - startpoint.X)-(target->Y - startpoint.Y));
+	#endif
 	z_delta_um = (uint32_t)labs(target->Z - startpoint.Z);
 
 	#ifdef LOOKAHEAD
-	// Look ahead vectorization: determine the displacement vector (in um) for this move
-	dda->delta.X = target->X - startpoint.X;
-	dda->delta.Y = target->Y - startpoint.Y;
-	dda->delta.Z = target->Z - startpoint.Z;
-	dda->delta.E = target->e_relative ? target->E : target->E - startpoint.E;
+		// Look ahead vectorization: determine the displacement vector (in um) for this move
+		#ifndef COREXY
+			dda->delta.X = target->X - startpoint.X;
+			dda->delta.Y = target->Y - startpoint.Y;
+		#else
+			dda->delta.X = (target->X - startpoint.X) + (target->Y - startpoint.Y);
+			dda->delta.Y = (target->X - startpoint.X) - (target->Y - startpoint.Y);
+		#endif
+		dda->delta.Z = target->Z - startpoint.Z;
+		dda->delta.E = target->e_relative ? target->E : target->E - startpoint.E;
 	#endif
 
-	steps = um_to_steps_x(target->X);
-	dda->x_delta = labs(steps - startpoint_steps.X);
-	startpoint_steps.X = steps;
-	steps = um_to_steps_y(target->Y);
-	dda->y_delta = labs(steps - startpoint_steps.Y);
-	startpoint_steps.Y = steps;
+	#ifndef COREXY
+		steps_a = um_to_steps_x(target->X);
+		dda->x_delta = labs(steps - startpoint_steps.X);
+		startpoint_steps.X = steps;
+		steps_b = um_to_steps_y(target->Y);
+		dda->y_delta = labs(steps - startpoint_steps.Y);
+		startpoint_steps.Y = steps;
+	#else
+		steps_a = um_to_steps_x(target->X);
+		steps_b = um_to_steps_y(target->Y);
+		dda->x_delta = labs((steps_a - startpoint_steps.X) + (steps_b - startpoint_steps.Y));
+		dda->y_delta = labs((steps_a - startpoint_steps.X) + (steps_b - startpoint_steps.Y));
+		startpoint_steps.X = steps_a;
+		startpoint_steps.Y = steps_b;
+	#endif
 	steps = um_to_steps_z(target->Z);
 	dda->z_delta = labs(steps - startpoint_steps.Z);
 	startpoint_steps.Z = steps;
 
-	dda->x_direction = (target->X >= startpoint.X)?1:0;
-	dda->y_direction = (target->Y >= startpoint.Y)?1:0;
+	#ifndef COREXY
+		dda->x_direction = (target->X >= startpoint.X)?1:0;
+		dda->y_direction = (target->Y >= startpoint.Y)?1:0;
+	#else
+		dda->x_direction = ((target->X - startpoint.X)+(target->Y - startpoint.Y)>-0)?1:0;
+		dda->y_direction = ((target->X - startpoint.X)-(target->Y - startpoint.Y)>=0)?1:0;
+	#endif
 	dda->z_direction = (target->Z >= startpoint.Z)?1:0;
 
 	if (target->e_relative) {
@@ -151,10 +178,15 @@ void dda_create(DDA *dda, TARGET *target, DDA *prev_dda) {
 		dda->e_direction = (target->E >= startpoint.E)?1:0;
 	}
 
-  #ifdef LOOKAHEAD
-  // Also displacements in micrometers, but for the lookahead alogrithms.
-  dda->delta.X = target->X - startpoint.X;
-  dda->delta.Y = target->Y - startpoint.Y;
+	#ifdef LOOKAHEAD
+	// Also displacements in micrometers, but for the lookahead alogrithms.
+		#ifndef COREXY
+			dda->delta.X = target->X - startpoint.X;
+			dda->delta.Y = target->Y - startpoint.Y;
+		#else
+			dda->delta.X = (target->X - startpoint.X) + (target->Y - startpoint.Y);
+			dda->delta.Y = (target->X - startpoint.X) - (target->Y - startpoint.Y);
+		#endif
   dda->delta.Z = target->Z - startpoint.Z;
   dda->delta.E = target->e_relative ? target->E : target->E - startpoint.E;
   #endif
@@ -749,7 +781,11 @@ void dda_clock() {
   //          endstop search, but as part of normal operations.
   if (endstop_stop == 0) {
     #if defined X_MIN_PIN || defined X_MAX_PIN
-    if (dda->endstop_check & 0x1) {
+	#ifndef COREXY
+		if (dda->endstop_check & 0x1) {
+	#else
+		if ((dda->endstop_check & 0x1) || (dda->endstop_check & 0x2)) {
+	#endif
       #if defined X_MIN_PIN
       if (x_min() == dda->endstop_stop_cond)
         move_state.debounce_count_xmin++;
@@ -768,7 +804,11 @@ void dda_clock() {
     #endif
 
     #if defined Y_MIN_PIN || defined Y_MAX_PIN
-    if (dda->endstop_check & 0x2) {
+	#ifndef COREXY
+		If (dda->endstop_check & 0x2) {
+	#else
+		if ((dda->endstop_check & 0x1) || (dda->endstop_check & 0x2)) {
+	#endif
       #if defined Y_MIN_PIN
       if (y_min() == dda->endstop_stop_cond)
         move_state.debounce_count_ymin++;
